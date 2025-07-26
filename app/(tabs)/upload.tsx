@@ -1,6 +1,8 @@
 // REQUIRED: Ensure supabase client is initialized at @/lib/supabase
 import { ThemedText } from '@/components/ThemedText';
 import { supabase } from '@/lib/supabase';
+import { decode } from 'base64-arraybuffer';
+import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useState } from 'react';
 import {
@@ -40,30 +42,54 @@ export default function UploadScreen() {
   // Convert local file URI to blob for upload
   async function uriToBlob(uri: string): Promise<Blob> {
     const res = await fetch(uri);
-    return await res.blob();
+    //console.log("Fetch status:", res.status);
+    const blob = await res.blob();
+    /* console.log("Uploading from URI:", uri);
+    console.log("BLOB DEBUG =======");
+    console.log("Type:", blob.type);
+    console.log("Size (bytes):", blob.size); */
+    return blob;
   }
 
   // Upload video to Supabase Storage bucket
-  async function uploadVideoToSupabase(fileUri: string, type: UploadType) {
-    const videoBlob = await uriToBlob(fileUri);
-    const fileName = `${type}-${Date.now()}.mp4`;
-
-    const { data, error } = await supabase.storage
-      .from('mechanics-uploads-bucket') // <-- Your bucket name
-      .upload(fileName, videoBlob, {
-        cacheControl: '3600',
-        upsert: false,
-        contentType: 'video/mp4',
+  async function uploadVideoToSupabase(fileUri: string, type: UploadType): Promise<string> {
+    try {
+      const base64 = await FileSystem.readAsStringAsync(fileUri, {
+        encoding: FileSystem.EncodingType.Base64,
       });
 
-    if (error) throw new Error(error.message);
+      const timestamp = Date.now();
+      const extension = '.mp4'; // or 'mp4' depending on the video format
+      const filePath = `${type}-${timestamp}.${extension}`;
+      const contentType = 'video/mp4'; // Or 'video/mp4' if appropriate
 
-    const publicUrl = supabase.storage
-      .from('mechanics-uploads-bucket')
-      .getPublicUrl(fileName).data.publicUrl;
+      const { data, error } = await supabase.storage
+        .from('mechanics-uploads-bucket')
+        .upload(filePath, decode(base64), {
+          contentType: contentType,
+        });
 
-    return publicUrl;
+      if (error) {
+        console.error("Supabase Upload Error:", error);
+        throw new Error(`Upload failed: ${error.message}`);
+      }
+
+      const { data: publicData } = supabase.storage
+        .from('mechanics-uploads-bucket')
+        .getPublicUrl(filePath);
+
+      if (!publicData?.publicUrl) {
+        throw new Error("Failed to get public URL");
+      }
+
+      console.log("✅ Upload successful:", publicData.publicUrl);
+      return publicData.publicUrl;
+    } catch (err: any) {
+      console.error("Upload failed:", err.message || err);
+      throw err;
+    }
   }
+
 
   async function handleVideoUpload(type: UploadType, fileUri: string) {
     setIsUploading(true);
